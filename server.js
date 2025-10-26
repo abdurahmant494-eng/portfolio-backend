@@ -7,6 +7,8 @@ require('dotenv').config();
 const app = express();
 
 // Middleware
+// Middleware
+// Middleware
 app.use(cors({
   origin: ['https://mellow-granita-7013c6.netlify.app', 'http://localhost:3000', 'http://127.0.0.1:5500'],
   credentials: true
@@ -78,83 +80,79 @@ app.post('/api/contact', async (req, res) => {
 
     await contact.save();
 
-    // Send email notification to you
-    const adminMailOptions = {
-      from: process.env.EMAIL_USER,
-      to: process.env.EMAIL_USER, // Send to yourself
-      subject: `📧 New Portfolio Message: ${subject || 'No Subject'}`,
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #0ef;">New Contact Form Submission</h2>
-          <div style="background: #f5f5f5; padding: 20px; border-radius: 10px;">
-            <p><strong>Name:</strong> ${name}</p>
-            <p><strong>Email:</strong> ${email}</p>
-            <p><strong>Phone:</strong> ${phone || 'Not provided'}</p>
-            <p><strong>Subject:</strong> ${subject || 'No subject'}</p>
-            <p><strong>Message:</strong></p>
-            <div style="background: white; padding: 15px; border-radius: 5px; border-left: 4px solid #0ef;">
-              ${message}
+    // Try to send emails, but don't fail if they timeout
+    try {
+      // Send email notification to you
+      const adminMailOptions = {
+        from: process.env.EMAIL_USER,
+        to: process.env.EMAIL_USER,
+        subject: `📧 New Portfolio Message: ${subject || 'No Subject'}`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #0ef;">New Contact Form Submission</h2>
+            <div style="background: #f5f5f5; padding: 20px; border-radius: 10px;">
+              <p><strong>Name:</strong> ${name}</p>
+              <p><strong>Email:</strong> ${email}</p>
+              <p><strong>Phone:</strong> ${phone || 'Not provided'}</p>
+              <p><strong>Subject:</strong> ${subject || 'No subject'}</p>
+              <p><strong>Message:</strong></p>
+              <div style="background: white; padding: 15px; border-radius: 5px; border-left: 4px solid #0ef;">
+                ${message}
+              </div>
             </div>
+            <p style="margin-top: 20px; color: #666;">
+              This message was sent from your portfolio website at ${new Date().toLocaleString()}
+            </p>
           </div>
-          <p style="margin-top: 20px; color: #666;">
-            This message was sent from your portfolio website at ${new Date().toLocaleString()}
-          </p>
-        </div>
-      `
-    };
+        `
+      };
 
-    // Send auto-reply to the person who contacted you
-    const userMailOptions = {
-      from: process.env.EMAIL_USER,
-      to: email, // Send to the person who filled the form
-      subject: 'Thank you for contacting me!',
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #0ef;">Thank You for Your Message!</h2>
-          <p>Dear <strong>${name}</strong>,</p>
-          <p>I have received your message and will get back to you as soon as possible.</p>
-          <div style="background: #f5f5f5; padding: 20px; border-radius: 10px; margin: 20px 0;">
-            <p><strong>Your Message:</strong></p>
-            <div style="background: white; padding: 15px; border-radius: 5px;">
-              ${message}
+      // Send auto-reply
+      const userMailOptions = {
+        from: process.env.EMAIL_USER,
+        to: email,
+        subject: 'Thank you for contacting me!',
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #0ef;">Thank You for Your Message!</h2>
+            <p>Dear <strong>${name}</strong>,</p>
+            <p>I have received your message and will get back to you as soon as possible.</p>
+            <div style="background: #f5f5f5; padding: 20px; border-radius: 10px; margin: 20px 0;">
+              <p><strong>Your Message:</strong></p>
+              <div style="background: white; padding: 15px; border-radius: 5px;">
+                ${message}
+              </div>
             </div>
+            <p>Best regards,<br><strong>Tahir Abduro</strong></p>
           </div>
-          <p>Best regards,<br><strong>Tahir Abduro</strong></p>
-          <hr style="margin: 20px 0;">
-          <p style="color: #666; font-size: 12px;">
-            This is an automated response. Please do not reply to this email.
-          </p>
-        </div>
-      `
-    };
+        `
+      };
 
-    // Send both emails
-    await transporter.sendMail(adminMailOptions);
-    await transporter.sendMail(userMailOptions);
-
-    res.json({ 
-      success: true, 
-      message: 'Message sent successfully! I will contact you soon.' 
-    });
+      await transporter.sendMail(adminMailOptions);
+      await transporter.sendMail(userMailOptions);
+      
+      res.json({ 
+        success: true, 
+        message: 'Message sent successfully! I will contact you soon.' 
+      });
+      
+    } catch (emailError) {
+      // Email failed but data was saved
+      console.log('Email sending failed, but message saved to database');
+      res.json({ 
+        success: true, 
+        message: 'Message received! I will contact you soon.' 
+      });
+    }
 
   } catch (error) {
     console.error('Contact form error:', error);
-    
-    // Check if it's an email error but data was saved
-    if (error.message.includes('email')) {
-      res.json({ 
-        success: true, 
-        message: 'Message received! (Email notification failed)' 
-      });
-    } else {
-      res.status(500).json({ 
-        success: false, 
-        message: 'Server error. Please try again later.' 
-      });
-    }
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error. Please try again later.' 
+    });
   }
 });
-
 // Get all contacts (for admin view)
 app.get('/api/contacts', async (req, res) => {
   try {
@@ -166,7 +164,8 @@ app.get('/api/contacts', async (req, res) => {
 });
 
 // Start server
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
+ 
