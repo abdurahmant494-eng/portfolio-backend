@@ -10,7 +10,12 @@ const app = express();
 // Middleware
 // Middleware
 app.use(cors({
-  origin: ['https://mellow-granita-7013c6.netlify.app', 'http://localhost:3000', 'http://127.0.0.1:5500'],
+  origin: [
+    'https://dazzling-stroopwafel-cf7c2e.netlify.app', // ← NEW DOMAIN
+    'https://mellow-granita-7013c6.netlify.app',       // ← OLD DOMAIN
+    'http://localhost:3000', 
+    'http://127.0.0.1:5500'
+  ],
   credentials: true
 }));
 app.use(express.json());
@@ -169,4 +174,5 @@ app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
  
+
 
