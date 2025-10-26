@@ -7,7 +7,10 @@ require('dotenv').config();
 const app = express();
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: ['https://mellow-granita-7013c6.netlify.app', 'http://localhost:3000', 'http://127.0.0.1:5500'],
+  credentials: true
+}));
 app.use(express.json());
 
 // Connect to MongoDB
