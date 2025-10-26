@@ -25,4 +25,5 @@ PORT=5000
 MONGODB_URI=your_mongodb_connection_string
 EMAIL_USER=your_email@gmail.com
 EMAIL_PASS=your_app_password
+
 CLIENT_URL=http://localhost:3000
