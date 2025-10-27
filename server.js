@@ -1,6 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const rateLimit = require('express-rate-limit');
 require('dotenv').config();
 
 const app = express();
@@ -8,8 +9,8 @@ const app = express();
 // Middleware
 app.use(cors({
   origin: [
-    'https://dazzling-stroopwafel-cf7c2e.netlify.app', // ← NEW DOMAIN
-    'https://mellow-granita-7013c6.netlify.app',       // ← OLD DOMAIN
+    'https://dazzling-stroopwafel-cf7c2e.netlify.app',
+    'https://mellow-granita-7013c6.netlify.app',
     'http://localhost:3000', 
     'http://127.0.0.1:5500'
   ],
@@ -17,12 +18,32 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Rate Limiting
+const contactLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // Limit each IP to 5 contact requests per 15 minutes
+  message: { 
+    success: false, 
+    message: 'Too many contact form submissions from this IP. Please try again in 15 minutes.' 
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Health check with basic rate limiting
+const healthLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 30, // 30 requests per minute
+  message: { 
+    success: false, 
+    message: 'Too many health check requests' 
+  }
+});
+
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('Connected to MongoDB'))
   .catch(err => console.log('MongoDB connection error:', err));
-
-
 
 // Simple Contact Schema
 const contactSchema = new mongoose.Schema({
@@ -38,12 +59,12 @@ const Contact = mongoose.model('Contact', contactSchema);
 
 // Routes
 // Health check
-app.get('/api/health', (req, res) => {
+app.get('/api/health', healthLimiter, (req, res) => {
   res.json({ message: 'Server is running!', status: 'OK' });
 });
 
-// Contact form endpoint with SendGrid
-app.post('/api/contact', async (req, res) => {
+// Contact form endpoint with SendGrid AND rate limiting
+app.post('/api/contact', contactLimiter, async (req, res) => {
   try {
     const { name, email, phone, subject, message } = req.body;
     
@@ -73,8 +94,8 @@ app.post('/api/contact', async (req, res) => {
 
       // Email to you (notification)
       const adminMsg = {
-        to: process.env.EMAIL_USER, // Your email
-        from: process.env.EMAIL_USER, // Verified sender in SendGrid
+        to: process.env.EMAIL_USER,
+        from: process.env.EMAIL_USER,
         subject: `📧 New Portfolio Message: ${subject || 'No Subject'}`,
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -134,7 +155,6 @@ app.post('/api/contact', async (req, res) => {
 
     } catch (emailError) {
       console.log('SendGrid email failed, but message saved to database:', emailError.message);
-      // Still success because data was saved
       res.json({ 
         success: true, 
         message: 'Message received! I will contact you soon.' 
@@ -148,7 +168,9 @@ app.post('/api/contact', async (req, res) => {
       message: 'Server error. Please try again later.' 
     });
   }
-});// Get all contacts (for admin view)
+});
+
+// Get all contacts (for admin view)
 app.get('/api/contacts', async (req, res) => {
   try {
     const contacts = await Contact.find().sort({ date: -1 });
@@ -163,4 +185,3 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
-
