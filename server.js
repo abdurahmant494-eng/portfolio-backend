@@ -6,8 +6,6 @@ require('dotenv').config();
 const app = express();
 
 // Middleware
-// Middleware
-// Middleware
 app.use(cors({
   origin: [
     'https://dazzling-stroopwafel-cf7c2e.netlify.app', // ← NEW DOMAIN
@@ -165,3 +163,4 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
+
