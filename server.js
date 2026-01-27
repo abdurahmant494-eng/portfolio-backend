@@ -2,18 +2,20 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
+const nodemailer = require('nodemailer');
 require('dotenv').config();
 
 const app = express();
 
 // ========== MIDDLEWARE ==========
-// Updated CORS for your new domain
+app.set('trust proxy', 1); // Fix for rate limiter behind proxy
+
 app.use(cors({
   origin: [
-    'https://tahir-abduro.netlify.app',           // ✅ Your new domain
-    'http://localhost:3000', 
+    'https://tahir-abduro.netlify.app',
+    'http://localhost:3000',
     'http://127.0.0.1:5500',
-    'http://localhost:5500'                       // For local testing
+    'http://localhost:5500'
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -21,68 +23,94 @@ app.use(cors({
 }));
 app.use(express.json());
 
-app.set('trust proxy', 1); // Add this before rate limiter
 // ========== RATE LIMITING ==========
 const contactLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // Limit each IP to 10 contact requests per 15 minutes
-  message: { 
-    success: false, 
-    message: 'Too many contact form submissions from this IP. Please try again in 15 minutes.' 
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: {
+    success: false,
+    message: 'Too many contact form submissions from this IP. Please try again in 15 minutes.'
   },
   standardHeaders: true,
   legacyHeaders: false,
 });
 
 const healthLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 minute
-  max: 30, // 30 requests per minute
-  message: { 
-    success: false, 
-    message: 'Too many health check requests' 
+  windowMs: 1 * 60 * 1000,
+  max: 30,
+  message: {
+    success: false,
+    message: 'Too many health check requests'
   }
 });
 
-// ========== DATABASE CONNECTION ==========
-const connectDB = async () => {
-    try {
-        const conn = await mongoose.connect(process.env.MONGODB_URI, {
-            useNewUrlParser: true,
-            useUnifiedTopology: true,
-            serverSelectionTimeoutMS: 5000, // Timeout after 5 seconds
-            socketTimeoutMS: 45000, // Close sockets after 45 seconds of inactivity
-        });
-        
-        console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
-        console.log(`📊 Database: ${conn.connection.name}`);
-        
-        // Listen for connection events
-        mongoose.connection.on('connected', () => {
-            console.log('🔗 MongoDB connection established');
-        });
-        
-        mongoose.connection.on('error', (err) => {
-            console.error('❌ MongoDB connection error:', err.message);
-        });
-        
-        mongoose.connection.on('disconnected', () => {
-            console.log('⚠️ MongoDB disconnected');
-        });
-        
-    } catch (error) {
-        console.error('❌ MongoDB connection failed:', error.message);
-        console.log('💡 Check:');
-        console.log('   1. MONGODB_URI in environment variables');
-        console.log('   2. MongoDB Atlas network access (IP whitelist)');
-        console.log('   3. Database user permissions');
-        console.log('   4. Special characters in password (URL encode commas)');
-        
-        // Don't crash the server, allow it to run without DB
-        // Contact form will still work but won't save to DB
+// ========== EMAIL TRANSPORTER ==========
+const createEmailTransporter = () => {
+  const emailService = process.env.EMAIL_SERVICE || 'sendgrid';
+  
+  if (emailService === 'gmail') {
+    console.log('📧 Using Gmail SMTP for emails');
+    return nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      },
+      tls: {
+        rejectUnauthorized: false
+      }
+    });
+  } else {
+    console.log('📧 Using SendGrid for emails');
+    const sgMail = require('@sendgrid/mail');
+    if (process.env.SENDGRID_API_KEY) {
+      sgMail.setApiKey(process.env.SENDGRID_API_KEY);
     }
+    return sgMail;
+  }
 };
 
-// Call the connection function
+// ========== DATABASE CONNECTION ==========
+const connectDB = async () => {
+  try {
+    const mongoURI = process.env.MONGODB_URI || process.env.WINDOW_LINT;
+    if (!mongoURI) {
+      console.log('⚠️  No MongoDB URI found in environment variables');
+      return;
+    }
+
+    const conn = await mongoose.connect(mongoURI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+    });
+    
+    console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
+    console.log(`📊 Database: ${conn.connection.name}`);
+    
+    mongoose.connection.on('connected', () => {
+      console.log('🔗 MongoDB connection established');
+    });
+    
+    mongoose.connection.on('error', (err) => {
+      console.error('❌ MongoDB connection error:', err.message);
+    });
+    
+    mongoose.connection.on('disconnected', () => {
+      console.log('⚠️ MongoDB disconnected');
+    });
+    
+  } catch (error) {
+    console.error('❌ MongoDB connection failed:', error.message);
+    console.log('💡 Check:');
+    console.log('   1. MONGODB_URI in environment variables');
+    console.log('   2. MongoDB Atlas network access (IP whitelist)');
+    console.log('   3. Database user permissions');
+    console.log('   4. Special characters in password (URL encode @ as %40)');
+  }
+};
+
 connectDB();
 
 // ========== DATABASE SCHEMA ==========
@@ -94,21 +122,159 @@ const contactSchema = new mongoose.Schema({
   message: { type: String, required: true },
   date: { type: Date, default: Date.now },
   ip: String,
-  userAgent: String
+  userAgent: String,
+  emailSent: { type: Boolean, default: false }
 });
 
 const Contact = mongoose.model('Contact', contactSchema);
+
+// ========== EMAIL TEMPLATES ==========
+const emailTemplates = {
+  adminEmail: (data) => ({
+    from: process.env.EMAIL_USER,
+    to: process.env.EMAIL_USER,
+    replyTo: data.email,
+    subject: `📧 New Portfolio Message: ${data.subject || 'No Subject'}`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #00eeff;">New Contact Form Submission</h2>
+        <div style="background: #f5f5f5; padding: 20px; border-radius: 10px;">
+          <p><strong>Name:</strong> ${data.name}</p>
+          <p><strong>Email:</strong> <a href="mailto:${data.email}">${data.email}</a></p>
+          <p><strong>Phone:</strong> ${data.phone || 'Not provided'}</p>
+          <p><strong>Subject:</strong> ${data.subject || 'No subject'}</p>
+          <p><strong>Message:</strong></p>
+          <div style="background: white; padding: 15px; border-radius: 5px; border-left: 4px solid #00eeff;">
+            ${data.message.replace(/\n/g, '<br>')}
+          </div>
+          <p style="margin-top: 15px; font-size: 12px; color: #666;">
+            <strong>IP:</strong> ${data.ip}<br>
+            <strong>Time:</strong> ${new Date().toLocaleString()}<br>
+            <strong>Database ID:</strong> ${data.dbId || 'Not saved'}
+          </p>
+        </div>
+        <p style="margin-top: 20px; color: #666;">
+          <a href="https://portfolio-backend-4-79pt.onrender.com/admin/contacts" style="color: #00eeff;">View all messages</a>
+        </p>
+      </div>
+    `
+  }),
+  
+  userEmail: (data) => ({
+    from: process.env.EMAIL_USER,
+    to: data.email,
+    subject: 'Thank you for contacting Tahir Abduro!',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #00eeff;">Thank You for Your Message!</h2>
+        <p>Dear <strong>${data.name}</strong>,</p>
+        <p>I have received your message and will get back to you as soon as possible.</p>
+        <div style="background: #f5f5f5; padding: 20px; border-radius: 10px; margin: 20px 0;">
+          <p><strong>Your Message:</strong></p>
+          <div style="background: white; padding: 15px; border-radius: 5px;">
+            ${data.message.replace(/\n/g, '<br>')}
+          </div>
+        </div>
+        <p><strong>Best regards,</strong><br>
+        <strong>Tahir Abduro</strong><br>
+        Frontend Developer & Tech Expert</p>
+        
+        <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee;">
+          <p style="color: #666; font-size: 14px;">
+            <strong>My Services:</strong><br>
+            • Frontend Web Development<br>
+            • Graphics & UI/UX Design<br>
+            • YouTube Video Production<br>
+            • Photography & Tech Support
+          </p>
+          <p style="color: #666; font-size: 12px; margin-top: 20px;">
+            This is an automated response. Please do not reply to this email.<br>
+            For urgent matters, contact me directly through my social media links on my portfolio.
+          </p>
+        </div>
+      </div>
+    `
+  })
+};
+
+// ========== SEND EMAIL FUNCTION ==========
+const sendEmails = async (data) => {
+  const emailService = process.env.EMAIL_SERVICE || 'sendgrid';
+  
+  try {
+    if (emailService === 'gmail') {
+      const transporter = createEmailTransporter();
+      
+      const adminMail = emailTemplates.adminEmail(data);
+      const userMail = emailTemplates.userEmail(data);
+      
+      const [adminResult, userResult] = await Promise.all([
+        transporter.sendMail(adminMail),
+        transporter.sendMail(userMail)
+      ]);
+      
+      return {
+        success: true,
+        adminSent: !!adminResult.messageId,
+        userSent: !!userResult.messageId,
+        service: 'gmail'
+      };
+      
+    } else {
+      const sgMail = createEmailTransporter();
+      
+      const adminMsg = {
+        to: process.env.EMAIL_USER,
+        from: process.env.EMAIL_USER,
+        replyTo: data.email,
+        subject: `📧 New Portfolio Message: ${data.subject || 'No Subject'}`,
+        html: emailTemplates.adminEmail(data).html
+      };
+      
+      const userMsg = {
+        to: data.email,
+        from: process.env.EMAIL_USER,
+        subject: 'Thank you for contacting Tahir Abduro!',
+        html: emailTemplates.userEmail(data).html
+      };
+      
+      const [adminResult, userResult] = await Promise.all([
+        sgMail.send(adminMsg),
+        sgMail.send(userMsg)
+      ]);
+      
+      return {
+        success: true,
+        adminSent: adminResult[0]?.statusCode === 202,
+        userSent: userResult[0]?.statusCode === 202,
+        service: 'sendgrid'
+      };
+    }
+    
+  } catch (error) {
+    console.error('❌ Email sending error:', error.message);
+    return {
+      success: false,
+      error: error.message,
+      service: emailService
+    };
+  }
+};
 
 // ========== ROUTES ==========
 
 // Health Check Endpoint
 app.get('/api/health', healthLimiter, (req, res) => {
   const dbStatus = mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected';
-  res.json({ 
-    message: 'Server is running!', 
+  const emailService = process.env.EMAIL_SERVICE || 'sendgrid';
+  
+  res.json({
+    message: 'Server is running!',
     status: 'OK',
     timestamp: new Date().toISOString(),
     database: dbStatus,
+    emailService: emailService,
+    frontendDomain: 'https://tahir-abduro.netlify.app',
     uptime: process.uptime()
   });
 });
@@ -118,7 +284,7 @@ app.post('/api/contact', contactLimiter, async (req, res) => {
   const startTime = Date.now();
   const clientIp = req.ip || req.headers['x-forwarded-for'] || req.connection.remoteAddress;
   
-  console.log('📩 New contact form submission:', { 
+  console.log('📩 New contact form submission:', {
     name: req.body.name,
     email: req.body.email,
     ip: clientIp,
@@ -131,9 +297,9 @@ app.post('/api/contact', contactLimiter, async (req, res) => {
     // Validation
     if (!name || !email || !message) {
       console.log('❌ Validation failed: Missing required fields');
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Name, email, and message are required' 
+      return res.status(400).json({
+        success: false,
+        message: 'Name, email, and message are required'
       });
     }
 
@@ -141,16 +307,17 @@ app.post('/api/contact', contactLimiter, async (req, res) => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
       console.log('❌ Validation failed: Invalid email format');
-      return res.status(400).json({ 
-        success: false, 
-        message: 'Please enter a valid email address' 
+      return res.status(400).json({
+        success: false,
+        message: 'Please enter a valid email address'
       });
     }
 
     let savedContact = null;
+    let dbConnected = mongoose.connection.readyState === 1;
     
     // Save to database if connected
-    if (mongoose.connection.readyState === 1) {
+    if (dbConnected) {
       try {
         const contact = new Contact({
           name,
@@ -166,127 +333,64 @@ app.post('/api/contact', contactLimiter, async (req, res) => {
         console.log('💾 Message saved to MongoDB:', savedContact._id);
       } catch (dbError) {
         console.error('❌ Database save error:', dbError.message);
-        // Continue to send email even if DB fails
+        dbConnected = false;
       }
     } else {
       console.log('⚠️  MongoDB not connected, skipping database save');
     }
 
-    // Send emails using SendGrid
-    try {
-      const sgMail = require('@sendgrid/mail');
-      sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+    // Send emails
+    const emailResult = await sendEmails({
+      name,
+      email,
+      phone: phone || '',
+      subject: subject || '',
+      message,
+      ip: clientIp,
+      dbId: savedContact?._id
+    });
 
-      // Email to you (notification)
-      const adminMsg = {
-        to: process.env.EMAIL_USER,
-        from: process.env.EMAIL_USER,
-        replyTo: email,
-        subject: `📧 New Portfolio Message: ${subject || 'No Subject'}`,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #00eeff;">New Contact Form Submission</h2>
-            <div style="background: #f5f5f5; padding: 20px; border-radius: 10px;">
-              <p><strong>Name:</strong> ${name}</p>
-              <p><strong>Email:</strong> <a href="mailto:${email}">${email}</a></p>
-              <p><strong>Phone:</strong> ${phone || 'Not provided'}</p>
-              <p><strong>Subject:</strong> ${subject || 'No subject'}</p>
-              <p><strong>Message:</strong></p>
-              <div style="background: white; padding: 15px; border-radius: 5px; border-left: 4px solid #00eeff;">
-                ${message.replace(/\n/g, '<br>')}
-              </div>
-              <p style="margin-top: 15px; font-size: 12px; color: #666;">
-                <strong>IP:</strong> ${clientIp}<br>
-                <strong>Time:</strong> ${new Date().toLocaleString()}<br>
-                <strong>Database ID:</strong> ${savedContact?._id || 'Not saved'}
-              </p>
-            </div>
-            <p style="margin-top: 20px; color: #666;">
-              <a href="https://portfolio-backend-4-79pt.onrender.com/admin/contacts" style="color: #00eeff;">View all messages in admin panel</a>
-            </p>
-          </div>
-        `
-      };
-
-      // Auto-reply to the visitor
-      const userMsg = {
-        to: email,
-        from: process.env.EMAIL_USER,
-        subject: 'Thank you for contacting Tahir Abduro!',
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #00eeff;">Thank You for Your Message!</h2>
-            <p>Dear <strong>${name}</strong>,</p>
-            <p>I have received your message and will get back to you as soon as possible.</p>
-            <div style="background: #f5f5f5; padding: 20px; border-radius: 10px; margin: 20px 0;">
-              <p><strong>Your Message:</strong></p>
-              <div style="background: white; padding: 15px; border-radius: 5px;">
-                ${message.replace(/\n/g, '<br>')}
-              </div>
-            </div>
-            <p><strong>Best regards,</strong><br>
-            <strong>Tahir Abduro</strong><br>
-            Frontend Developer & Tech Expert</p>
-            
-            <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee;">
-              <p style="color: #666; font-size: 14px;">
-                <strong>My Services:</strong><br>
-                • Frontend Web Development<br>
-                • Graphics & UI/UX Design<br>
-                • YouTube Video Production<br>
-                • Photography & Tech Support
-              </p>
-              <p style="color: #666; font-size: 12px; margin-top: 20px;">
-                This is an automated response. Please do not reply to this email.<br>
-                For urgent matters, contact me directly through my social media links on my portfolio.
-              </p>
-            </div>
-          </div>
-        `
-      };
-
-      // Send both emails
-      const [adminResult, userResult] = await Promise.all([
-        sgMail.send(adminMsg),
-        sgMail.send(userMsg)
-      ]);
-
-      const responseTime = Date.now() - startTime;
-      
-      console.log('✅ Emails sent successfully!');
-      console.log(`📤 Admin email: ${adminResult[0].statusCode === 202 ? 'Sent' : 'Failed'}`);
-      console.log(`📤 User email: ${userResult[0].statusCode === 202 ? 'Sent' : 'Failed'}`);
+    const responseTime = Date.now() - startTime;
+    
+    if (emailResult.success) {
+      console.log(`✅ Emails sent via ${emailResult.service}!`);
+      console.log(`📤 Admin email: ${emailResult.adminSent ? 'Sent' : 'Failed'}`);
+      console.log(`📤 User email: ${emailResult.userSent ? 'Sent' : 'Failed'}`);
       console.log(`⏱️  Response time: ${responseTime}ms`);
       
-      res.json({ 
-        success: true, 
+      // Update contact record if saved
+      if (savedContact) {
+        savedContact.emailSent = true;
+        await savedContact.save();
+      }
+      
+      res.json({
+        success: true,
         message: 'Message sent successfully! I will contact you soon.',
         data: {
           savedToDatabase: !!savedContact,
-          emailsSent: 2,
+          emailsSent: (emailResult.adminSent ? 1 : 0) + (emailResult.userSent ? 1 : 0),
+          emailService: emailResult.service,
           responseTime: `${responseTime}ms`
         }
       });
-
-    } catch (emailError) {
-      console.error('❌ SendGrid error:', emailError.message);
-      if (emailError.response) {
-        console.error('SendGrid response:', emailError.response.body);
-      }
       
-      // Still successful if saved to database
+    } else {
+      console.log('❌ Email sending failed:', emailResult.error);
+      
       if (savedContact) {
         console.log('💾 Message saved to database only (no email sent)');
-        res.json({ 
-          success: true, 
+        res.json({
+          success: true,
           message: 'Message received! I will contact you soon.',
           note: 'Emails could not be sent, but message was saved.'
         });
       } else {
         console.log('❌ Message not saved and email failed');
-        res.status(500).json({ 
-          success: false, 
-          message: 'Failed to send message. Please try again later or contact me through social media.' 
+        res.status(500).json({
+          success: false,
+          message: 'Failed to send message. Please try again later or contact me through social media.',
+          responseTime: `${responseTime}ms`
         });
       }
     }
@@ -295,10 +399,9 @@ app.post('/api/contact', contactLimiter, async (req, res) => {
     console.error('❌ Contact form error:', error);
     const responseTime = Date.now() - startTime;
     
-    res.status(500).json({ 
-      success: false, 
+    res.status(500).json({
+      success: false,
       message: 'Server error. Please try again later.',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined,
       responseTime: `${responseTime}ms`
     });
   }
@@ -308,16 +411,16 @@ app.post('/api/contact', contactLimiter, async (req, res) => {
 app.get('/api/contacts', async (req, res) => {
   try {
     const contacts = await Contact.find().sort({ date: -1 }).limit(100);
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       count: contacts.length,
-      data: contacts 
+      data: contacts
     });
   } catch (error) {
     console.error('❌ Get contacts error:', error);
-    res.status(500).json({ 
-      success: false, 
-      message: 'Failed to retrieve contacts' 
+    res.status(500).json({
+      success: false,
+      message: 'Failed to retrieve contacts'
     });
   }
 });
@@ -327,6 +430,7 @@ app.get('/admin/contacts', async (req, res) => {
   try {
     const contacts = await Contact.find().sort({ date: -1 });
     const dbStatus = mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected';
+    const emailService = process.env.EMAIL_SERVICE || 'sendgrid';
     
     res.send(`
       <!DOCTYPE html>
@@ -423,7 +527,7 @@ app.get('/admin/contacts', async (req, res) => {
         <div class="container">
           <header>
             <h1>📨 Contact Messages Admin</h1>
-            <p>Total messages: ${contacts.length} | Database: <span class="${dbStatus === 'Connected' ? 'success' : 'error'}">${dbStatus}</span></p>
+            <p>Total messages: ${contacts.length} | Database: <span class="${dbStatus === 'Connected' ? 'success' : 'error'}">${dbStatus}</span> | Email Service: <span class="success">${emailService.toUpperCase()}</span></p>
             
             <div class="stats">
               <div class="stat-card">
@@ -440,13 +544,8 @@ app.get('/admin/contacts', async (req, res) => {
                 }).length}</p>
               </div>
               <div class="stat-card">
-                <h3>This Month</h3>
-                <p>${contacts.filter(c => {
-                  const msgDate = new Date(c.date);
-                  const monthAgo = new Date();
-                  monthAgo.setMonth(monthAgo.getMonth() - 1);
-                  return msgDate > monthAgo;
-                }).length}</p>
+                <h3>Emails Sent</h3>
+                <p>${contacts.filter(c => c.emailSent).length}</p>
               </div>
             </div>
           </header>
@@ -470,6 +569,7 @@ app.get('/admin/contacts', async (req, res) => {
                   <th>Phone</th>
                   <th>Subject</th>
                   <th>Message</th>
+                  <th>Email Sent</th>
                 </tr>
               </thead>
               <tbody>
@@ -481,6 +581,7 @@ app.get('/admin/contacts', async (req, res) => {
                     <td>${contact.phone || '-'}</td>
                     <td>${contact.subject || '-'}</td>
                     <td class="message-cell" title="${contact.message}">${contact.message}</td>
+                    <td class="${contact.emailSent ? 'success' : 'error'}">${contact.emailSent ? '✅' : '❌'}</td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -493,6 +594,7 @@ app.get('/admin/contacts', async (req, res) => {
             <p><strong>Backend URL:</strong> https://portfolio-backend-4-79pt.onrender.com</p>
             <p><strong>Frontend URL:</strong> https://tahir-abduro.netlify.app</p>
             <p><strong>MongoDB:</strong> ${mongoose.connection.host || 'Not connected'}</p>
+            <p><strong>Email Service:</strong> ${emailService.toUpperCase()}</p>
             <p><strong>Uptime:</strong> ${Math.floor(process.uptime() / 60)} minutes</p>
             <p style="margin-top: 10px;">
               <a href="/api/contacts" style="color: #00eeff;">View as JSON API</a> | 
@@ -532,7 +634,6 @@ app.get('/admin/contacts', async (req, res) => {
               row.style.display = show ? '' : 'none';
             });
             
-            // Update active button
             document.querySelectorAll('.filter-btn').forEach(btn => {
               btn.classList.remove('active');
               if (btn.textContent.includes(filter.charAt(0).toUpperCase() + filter.slice(1))) {
@@ -541,7 +642,6 @@ app.get('/admin/contacts', async (req, res) => {
             });
           }
           
-          // Auto-refresh every 30 seconds
           setTimeout(() => location.reload(), 30000);
         </script>
       </body>
@@ -555,8 +655,8 @@ app.get('/admin/contacts', async (req, res) => {
 
 // 404 Handler
 app.use((req, res) => {
-  res.status(404).json({ 
-    success: false, 
+  res.status(404).json({
+    success: false,
     message: 'Route not found',
     availableRoutes: [
       'GET /api/health',
@@ -570,10 +670,13 @@ app.use((req, res) => {
 // ========== START SERVER ==========
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
+  const emailService = process.env.EMAIL_SERVICE || 'sendgrid';
   console.log(`
   🚀 Server running on port ${PORT}
   🌐 CORS enabled for:
      - https://tahir-abduro.netlify.app
+  
+  📧 Email Service: ${emailService.toUpperCase()}
   
   📊 Available endpoints:
      GET  /api/health     - Health check
@@ -584,4 +687,3 @@ app.listen(PORT, () => {
   ⏰ Server started: ${new Date().toLocaleString()}
   `);
 });
-
