@@ -1,3 +1,12 @@
+// ADD THIS AT THE VERY TOP (after require statements)
+console.log('=== ENVIRONMENT VARIABLES ===');
+console.log('EMAIL_SERVICE:', process.env.EMAIL_SERVICE || 'NOT SET (default: sendgrid)');
+console.log('EMAIL_USER:', process.env.EMAIL_USER || 'NOT SET');
+console.log('EMAIL_PASS:', process.env.EMAIL_PASS ? '***SET***' : 'NOT SET');
+console.log('MONGODB_URI:', process.env.MONGODB_URI ? 'SET' : 'NOT SET');
+console.log('PORT:', process.env.PORT || 'default');
+console.log('=============================');
+
 // DEBUG: Check environment variables
 console.log('=== ENVIRONMENT CHECK ===');
 console.log('EMAIL_SERVICE:', process.env.EMAIL_SERVICE || 'NOT SET (defaulting to sendgrid)');
@@ -696,4 +705,5 @@ app.listen(PORT, () => {
   ⏰ Server started: ${new Date().toLocaleString()}
   `);
 });
+
 
