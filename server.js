@@ -43,15 +43,46 @@ const healthLimiter = rateLimit({
 });
 
 // ========== DATABASE CONNECTION ==========
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => {
-    console.log('✅ Connected to MongoDB');
-    console.log('📊 Database:', mongoose.connection.name);
-  })
-  .catch(err => {
-    console.error('❌ MongoDB connection error:', err.message);
-    console.log('⚠️  Contact form will work but emails won\'t be saved to database');
-  });
+const connectDB = async () => {
+    try {
+        const conn = await mongoose.connect(process.env.MONGODB_URI, {
+            useNewUrlParser: true,
+            useUnifiedTopology: true,
+            serverSelectionTimeoutMS: 5000, // Timeout after 5 seconds
+            socketTimeoutMS: 45000, // Close sockets after 45 seconds of inactivity
+        });
+        
+        console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
+        console.log(`📊 Database: ${conn.connection.name}`);
+        
+        // Listen for connection events
+        mongoose.connection.on('connected', () => {
+            console.log('🔗 MongoDB connection established');
+        });
+        
+        mongoose.connection.on('error', (err) => {
+            console.error('❌ MongoDB connection error:', err.message);
+        });
+        
+        mongoose.connection.on('disconnected', () => {
+            console.log('⚠️ MongoDB disconnected');
+        });
+        
+    } catch (error) {
+        console.error('❌ MongoDB connection failed:', error.message);
+        console.log('💡 Check:');
+        console.log('   1. MONGODB_URI in environment variables');
+        console.log('   2. MongoDB Atlas network access (IP whitelist)');
+        console.log('   3. Database user permissions');
+        console.log('   4. Special characters in password (URL encode commas)');
+        
+        // Don't crash the server, allow it to run without DB
+        // Contact form will still work but won't save to DB
+    }
+};
+
+// Call the connection function
+connectDB();
 
 // ========== DATABASE SCHEMA ==========
 const contactSchema = new mongoose.Schema({
