@@ -1,3 +1,12 @@
+// DEBUG: Check environment variables
+console.log('=== ENVIRONMENT CHECK ===');
+console.log('EMAIL_SERVICE:', process.env.EMAIL_SERVICE || 'NOT SET (defaulting to sendgrid)');
+console.log('EMAIL_USER:', process.env.EMAIL_USER || 'NOT SET');
+console.log('EMAIL_PASS:', process.env.EMAIL_PASS ? 'SET (hidden)' : 'NOT SET');
+console.log('MONGODB_URI:', process.env.MONGODB_URI ? 'SET' : 'NOT SET');
+console.log('PORT:', process.env.PORT || 10000);
+console.log('=========================');
+
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -687,3 +696,4 @@ app.listen(PORT, () => {
   ⏰ Server started: ${new Date().toLocaleString()}
   `);
 });
+
