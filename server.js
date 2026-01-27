@@ -21,6 +21,7 @@ app.use(cors({
 }));
 app.use(express.json());
 
+app.set('trust proxy', 1); // Add this before rate limiter
 // ========== RATE LIMITING ==========
 const contactLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -583,3 +584,4 @@ app.listen(PORT, () => {
   ⏰ Server started: ${new Date().toLocaleString()}
   `);
 });
+
