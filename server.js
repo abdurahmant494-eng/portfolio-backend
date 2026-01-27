@@ -6,15 +6,19 @@ require('dotenv').config();
 
 const app = express();
 
-// Middleware
+// Middleware - UPDATED CORS
 app.use(cors({
   origin: [
+    'https://tahir-abduro.netlify.app',           // ✅ Your new domain
     'https://dazzling-stroopwafel-cf7c2e.netlify.app',
     'https://mellow-granita-7013c6.netlify.app',
     'http://localhost:3000', 
-    'http://127.0.0.1:5500'
+    'http://127.0.0.1:5500',
+    'http://localhost:5500'                       // ✅ For local testing
   ],
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
 
@@ -184,4 +188,8 @@ app.get('/api/contacts', async (req, res) => {
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
+  console.log('✅ CORS configured for:');
+  console.log('   - https://tahir-abduro.netlify.app');
+  console.log('   - https://dazzling-stroopwafel-cf7c2e.netlify.app');
+  console.log('   - https://mellow-granita-7013c6.netlify.app');
 });
